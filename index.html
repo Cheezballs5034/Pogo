@@ -5,29 +5,45 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pogo Assistant Portal</title>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background: #121212; color: #fff; text-align: center; padding-top: 10vh; }
+        body { font-family: 'Segoe UI', sans-serif; background: #121212; color: #fff; text-align: center; padding-top: 5vh; }
         .container { max-width: 500px; margin: auto; background: #1e1e1e; padding: 30px; border-radius: 15px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
         button { background: #007bff; border: none; color: white; padding: 15px 30px; font-size: 18px; border-radius: 50px; cursor: pointer; transition: 0.3s; margin-top: 20px; }
         button:active { background: #0056b3; transform: scale(0.98); }
         button.recording { background: #dc3545; animation: pulse 1.5s infinite; }
+        
+        /* New Text Input Styling */
+        .input-group { display: flex; margin-top: 25px; gap: 10px; }
+        input[type="text"] { flex: 1; padding: 12px 20px; border-radius: 25px; border: 1px solid #333; background: #252525; color: white; font-size: 16px; outline: none; }
+        input[type="text"]:focus { border-color: #007bff; }
+        .send-btn { margin-top: 0; padding: 12px 25px; font-size: 16px; border-radius: 25px; }
+
         #status { margin-top: 20px; color: #aaa; font-style: italic; }
-        #output { margin-top: 30px; padding: 15px; background: #292929; border-radius: 8px; font-size: 18px; min-height: 40px; }
+        #output { margin-top: 30px; padding: 15px; background: #292929; border-radius: 8px; font-size: 18px; min-height: 40px; text-align: left; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Pogo Remote Interface</h1>
+        <h1>Pogo Portal</h1>
+        
         <button id="recordBtn">Hold Spacebar or Click to Talk</button>
+        
+        <div class="input-group">
+            <input type="text" id="textIn" placeholder="Type a message to Pogo...">
+            <button id="sendBtn" class="send-btn">Send</button>
+        </div>
+
         <p id="status">Ready</p>
         <div id="output">Responses will appear here...</div>
     </div>
 
     <script>
-        // PASTE YOUR PUBLIC HTTPS TUNNEL URL HERE BETWEEN THE QUOTES
+        // Your live tunnel link plugged in directly:
         const BACKEND_URL = "https://camcorder-obituary-amiss.ngrok-free.dev"; 
 
         const recordBtn = document.getElementById('recordBtn');
+        const textIn = document.getElementById('textIn');
+        const sendBtn = document.getElementById('sendBtn');
         const statusText = document.getElementById('status');
         const outputDiv = document.getElementById('output');
         
@@ -35,19 +51,62 @@
         let audioChunks = [];
         let isRecording = false;
 
+        // Process final payload data and speak response
+        function renderResponse(data) {
+            outputDiv.innerHTML = `<strong>You:</strong> ${data.user_text || "..."}<br><br><strong>Pogo:</strong> ${data.reply}`;
+            statusText.innerText = "Ready";
+            recordBtn.innerText = "Hold Spacebar or Click to Talk";
+            
+            const utterance = new SpeechSynthesisUtterance(data.reply);
+            window.speechSynthesis.speak(utterance);
+        }
+
+        function triggerError() {
+            statusText.innerText = "Connection Error!";
+            outputDiv.innerText = "Could not reach your Mini PC. Is the Ngrok tunnel active?";
+            recordBtn.innerText = "Hold Spacebar or Click to Talk";
+        }
+
+        // --- TEXT PIPELINE ---
+        async function sendTextMessage() {
+            const val = textIn.value.strip ? textIn.value.strip() : textIn.value.trim();
+            if (!val) return;
+
+            textIn.value = "";
+            statusText.innerText = "Thinking...";
+
+            try {
+                const response = await fetch(`${BACKEND_URL}/api/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: val })
+                });
+                const data = await response.json();
+                renderResponse(data);
+            } catch (err) {
+                triggerError();
+            }
+        }
+
+        sendBtn.addEventListener('click', sendTextMessage);
+        textIn.addEventListener('keydown', (e) => { if(e.key === 'Enter') sendTextMessage(); });
+
+        // --- VOICE PIPELINE ---
         async function startRecording() {
             audioChunks = [];
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mediaRecorder = new MediaRecorder(stream);
-            
-            mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
-            mediaRecorder.onstop = sendAudioToBackend;
-            
-            mediaRecorder.start();
-            isRecording = true;
-            recordBtn.innerText = "🔴 RECORDING... Release/Click to Stop";
-            recordBtn.classList.add('recording');
-            statusText.innerText = "Listening to you...";
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
+                mediaRecorder.onstop = sendAudioToBackend;
+                mediaRecorder.start();
+                isRecording = true;
+                recordBtn.innerText = "🔴 RECORDING... Release to Stop";
+                recordBtn.classList.add('recording');
+                statusText.innerText = "Listening...";
+            } catch(e) {
+                statusText.innerText = "Microphone access denied!";
+            }
         }
 
         function stopRecording() {
@@ -56,7 +115,7 @@
             isRecording = false;
             recordBtn.innerText = "Processing...";
             recordBtn.classList.remove('recording');
-            statusText.innerText = "Sending to Mini PC Brain...";
+            statusText.innerText = "Processing audio...";
         }
 
         async function sendAudioToBackend() {
@@ -70,31 +129,31 @@
                     body: formData
                 });
                 const data = await response.json();
-                
-                outputDiv.innerHTML = `<strong>You:</strong> ${data.user_text || "..."}<br><br><strong>Pogo:</strong> ${data.reply}`;
-                statusText.innerText = "Ready";
-                recordBtn.innerText = "Hold Spacebar or Click to Talk";
-                
-                // Native Web Speech Engine (Smooth, fast, and stays clear of system hardware blocks!)
-                const utterance = new SpeechSynthesisUtterance(data.reply);
-                window.speechSynthesis.speak(utterance);
-                
+                renderResponse(data);
             } catch (err) {
-                statusText.innerText = "Connection Error!";
-                outputDiv.innerText = "Could not link up with the Mini PC server. Is the tunnel open?";
-                recordBtn.innerText = "Hold Spacebar or Click to Talk";
+                triggerError();
             }
         }
 
-        // Click / Touch Controls
+        // Push-to-Talk Mouse & Touch Listeners
         recordBtn.addEventListener('mousedown', startRecording);
         recordBtn.addEventListener('mouseup', stopRecording);
         recordBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
         recordBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); });
 
-        // Keyboard Spacebar Controls
-        window.addEventListener('keydown', (e) => { if(e.code === 'Space' && !isRecording) { e.preventDefault(); startRecording(); } });
-        window.addEventListener('keyup', (e) => { if(e.code === 'Space' && isRecording) { e.preventDefault(); stopRecording(); } });
+        // Push-to-Talk Spacebar Listeners (Avoid conflicts when user types inside input box)
+        window.addEventListener('keydown', (e) => { 
+            if(e.code === 'Space' && !isRecording && document.activeElement !== textIn) { 
+                e.preventDefault(); 
+                startRecording(); 
+            } 
+        });
+        window.addEventListener('keyup', (e) => { 
+            if(e.code === 'Space' && isRecording && document.activeElement !== textIn) { 
+                e.preventDefault(); 
+                stopRecording(); 
+            } 
+        });
     </script>
 </body>
 </html>
