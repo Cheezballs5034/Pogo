@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pogo Assistant Portal</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #121212; color: #fff; text-align: center; padding-top: 10vh; }
+        .container { max-width: 500px; margin: auto; background: #1e1e1e; padding: 30px; border-radius: 15px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+        button { background: #007bff; border: none; color: white; padding: 15px 30px; font-size: 18px; border-radius: 50px; cursor: pointer; transition: 0.3s; margin-top: 20px; }
+        button:active { background: #0056b3; transform: scale(0.98); }
+        button.recording { background: #dc3545; animation: pulse 1.5s infinite; }
+        #status { margin-top: 20px; color: #aaa; font-style: italic; }
+        #output { margin-top: 30px; padding: 15px; background: #292929; border-radius: 8px; font-size: 18px; min-height: 40px; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Pogo Remote Interface</h1>
+        <button id="recordBtn">Hold Spacebar or Click to Talk</button>
+        <p id="status">Ready</p>
+        <div id="output">Responses will appear here...</div>
+    </div>
+
+    <script>
+        // PASTE YOUR PUBLIC HTTPS TUNNEL URL HERE BETWEEN THE QUOTES
+        const BACKEND_URL = "https://camcorder-obituary-amiss.ngrok-free.dev"; 
+
+        const recordBtn = document.getElementById('recordBtn');
+        const statusText = document.getElementById('status');
+        const outputDiv = document.getElementById('output');
+        
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+
+        async function startRecording() {
+            audioChunks = [];
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            
+            mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
+            mediaRecorder.onstop = sendAudioToBackend;
+            
+            mediaRecorder.start();
+            isRecording = true;
+            recordBtn.innerText = "🔴 RECORDING... Release/Click to Stop";
+            recordBtn.classList.add('recording');
+            statusText.innerText = "Listening to you...";
+        }
+
+        function stopRecording() {
+            if (!isRecording) return;
+            mediaRecorder.stop();
+            isRecording = false;
+            recordBtn.innerText = "Processing...";
+            recordBtn.classList.remove('recording');
+            statusText.innerText = "Sending to Mini PC Brain...";
+        }
+
+        async function sendAudioToBackend() {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'input.wav');
+
+            try {
+                const response = await fetch(`${BACKEND_URL}/api/chat`, {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                
+                outputDiv.innerHTML = `<strong>You:</strong> ${data.user_text || "..."}<br><br><strong>Pogo:</strong> ${data.reply}`;
+                statusText.innerText = "Ready";
+                recordBtn.innerText = "Hold Spacebar or Click to Talk";
+                
+                // Native Web Speech Engine (Smooth, fast, and stays clear of system hardware blocks!)
+                const utterance = new SpeechSynthesisUtterance(data.reply);
+                window.speechSynthesis.speak(utterance);
+                
+            } catch (err) {
+                statusText.innerText = "Connection Error!";
+                outputDiv.innerText = "Could not link up with the Mini PC server. Is the tunnel open?";
+                recordBtn.innerText = "Hold Spacebar or Click to Talk";
+            }
+        }
+
+        // Click / Touch Controls
+        recordBtn.addEventListener('mousedown', startRecording);
+        recordBtn.addEventListener('mouseup', stopRecording);
+        recordBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
+        recordBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); });
+
+        // Keyboard Spacebar Controls
+        window.addEventListener('keydown', (e) => { if(e.code === 'Space' && !isRecording) { e.preventDefault(); startRecording(); } });
+        window.addEventListener('keyup', (e) => { if(e.code === 'Space' && isRecording) { e.preventDefault(); stopRecording(); } });
+    </script>
+</body>
+</html>
